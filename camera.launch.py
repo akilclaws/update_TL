@@ -1,4 +1,6 @@
 # % write in actual package of camera_ros package launch file (camera.launch.py)
+# % Only change in line ---> remappings=[('/camera/image_raw', '/image_stream_one')],
+# % from /camera/image_raw to /image_stream_one for creating multiple cameras
 
 from ament_index_python.resources import has_resource
 
