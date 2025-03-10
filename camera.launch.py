@@ -1,3 +1,5 @@
+# write in actual package of camera_ros package launch file (camera.launch.py)
+
 from ament_index_python.resources import has_resource
 
 from launch.actions import DeclareLaunchArgument
