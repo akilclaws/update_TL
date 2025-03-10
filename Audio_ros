@@ -230,3 +230,9 @@ setup(
 	},
 )
 
+
+ros2 launch is not working while ros2run is working
+So,
+ros2 run rtab_scan audio_publisher.py
+ros2 run rtab_scan audio_subscriber.py
+
