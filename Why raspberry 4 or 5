@@ -1,0 +1,8 @@
+To connect wifi inside tunnel
+
+% first how to select raspberry pi 
+
+Raspberry pi 4 is comaptible for ubuntu 22.04 as well 24.04 but we had raspberry pi 5
+But Rpi5 will work only with only ubuntu 24.04 so, only ros2 higher versions of humble, jazzy, rolling can be included herein rpi5
+
+Errors in raspberry pi 5 are (not availability of repository - universe) while installation
