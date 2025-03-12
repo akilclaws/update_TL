@@ -1,0 +1,261 @@
+Code for connecting & checking single and dual camera in jetson orin nano
+
+Follow instructions of connecting rapi camera with jetson nano (hardware connection)
+check lsusb
+
+Then follow instructions to check camera configuration using github page
+https://github.com/JetsonHacksNano/CSI-Camera
+
+Then if camera is working code for single camera is given below which publishes to topic /image1
+
+import cv2
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+import time
+
+def gstreamer_pipeline(
+    sensor_id=0,
+    capture_width=1920,
+    capture_height=1080,
+    display_width=960,
+    display_height=540,
+    framerate=30,
+    flip_method=0,
+):
+    return (
+        "nvarguscamerasrc sensor-id=%d ! "
+        "video/x-raw(memory:NVMM), width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
+        "nvvidconv flip-method=%d ! "
+        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink"
+        % (
+            sensor_id,
+            capture_width,
+            capture_height,
+            framerate,
+            flip_method,
+            display_width,
+            display_height,
+        )
+    )
+
+class CameraPublisher(Node):
+    def __init__(self):
+        super().__init__('camera_publisher')
+        self.publisher_ = self.create_publisher(Image, '/image1', 10)
+        self.bridge = CvBridge()
+        
+        # GStreamer pipeline to read the camera stream
+        self.video_capture = cv2.VideoCapture(gstreamer_pipeline(flip_method=0), cv2.CAP_GSTREAMER)
+
+        if not self.video_capture.isOpened():
+            self.get_logger().error('Error: Unable to open camera')
+            return
+
+        self.timer = self.create_timer(0.1, self.timer_callback)  # Adjust the frequency if necessary
+
+    def timer_callback(self):
+        ret_val, frame = self.video_capture.read()
+        if ret_val:
+            try:
+                # Convert the OpenCV frame to a ROS Image message
+                ros_image = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
+                # Publish the image
+                self.publisher_.publish(ros_image)
+            except Exception as e:
+                self.get_logger().error(f'Error converting image: {e}')
+        else:
+            self.get_logger().warn('No frame received from camera')
+
+    def __del__(self):
+        if self.video_capture.isOpened():
+            self.video_capture.release()
+
+def main(args=None):
+    rclpy.init(args=args)
+    camera_publisher = CameraPublisher()
+
+    try:
+        rclpy.spin(camera_publisher)
+    except KeyboardInterrupt:
+        pass
+
+    camera_publisher.destroy_node()
+    rclpy.shutdown()
+
+if __name__ == '__main__':
+    main()
+
+
+
+
+
+If dual camera is set then check run python3 dual_camera.py from CSI_camera and create a ros publisher publishing to topic /image1 and /image2
+
+import cv2
+import threading
+import numpy as np
+import rclpy
+from rclpy.node import Node
+from sensor_msgs.msg import Image
+from cv_bridge import CvBridge
+
+
+class CSI_Camera:
+    def __init__(self):
+        self.video_capture = None
+        self.frame = None
+        self.grabbed = False
+        self.read_thread = None
+        self.read_lock = threading.Lock()
+        self.running = False
+
+    def open(self, gstreamer_pipeline_string):
+        try:
+            self.video_capture = cv2.VideoCapture(gstreamer_pipeline_string, cv2.CAP_GSTREAMER)
+            self.grabbed, self.frame = self.video_capture.read()
+        except RuntimeError:
+            self.video_capture = None
+            print("Unable to open camera")
+            print("Pipeline: " + gstreamer_pipeline_string)
+
+    def start(self):
+        if self.running:
+            print('Video capturing is already running')
+            return None
+        if self.video_capture is not None:
+            self.running = True
+            self.read_thread = threading.Thread(target=self.updateCamera)
+            self.read_thread.start()
+        return self
+
+    def stop(self):
+        self.running = False
+        if self.read_thread is not None:
+            self.read_thread.join()
+        self.read_thread = None
+
+    def updateCamera(self):
+        while self.running:
+            try:
+                grabbed, frame = self.video_capture.read()
+                with self.read_lock:
+                    self.grabbed = grabbed
+                    self.frame = frame
+            except RuntimeError:
+                print("Could not read image from camera")
+
+    def read(self):
+        with self.read_lock:
+            frame = self.frame.copy()
+            grabbed = self.grabbed
+        return grabbed, frame
+
+    def release(self):
+        if self.video_capture is not None:
+            self.video_capture.release()
+            self.video_capture = None
+        if self.read_thread is not None:
+            self.read_thread.join()
+
+
+def gstreamer_pipeline(sensor_id=0, capture_width=1920, capture_height=1080, display_width=1920, display_height=1080, framerate=30, flip_method=0):
+    return (
+        "nvarguscamerasrc sensor-id=%d ! "
+        "video/x-raw(memory:NVMM), width=(int)%d, height=(int)%d, framerate=(fraction)%d/1 ! "
+        "nvvidconv flip-method=%d ! "
+        "video/x-raw, width=(int)%d, height=(int)%d, format=(string)BGRx ! "
+        "videoconvert ! "
+        "video/x-raw, format=(string)BGR ! appsink"
+        % (
+            sensor_id,
+            capture_width,
+            capture_height,
+            framerate,
+            flip_method,
+            display_width,
+            display_height,
+        )
+    )
+
+
+class DualCameraPublisher(Node):
+    def __init__(self):
+        super().__init__('dual_camera_publisher')
+        self.bridge = CvBridge()
+
+        # Create publishers for two camera topics
+        self.publisher1 = self.create_publisher(Image, 'image1', 10)
+        self.publisher2 = self.create_publisher(Image, 'image2', 10)
+
+        # Initialize CSI Cameras
+        self.left_camera = CSI_Camera()
+        self.left_camera.open(
+            gstreamer_pipeline(
+                sensor_id=0,
+                capture_width=1920,
+                capture_height=1080,
+                flip_method=0,
+                display_width=960,
+                display_height=540,
+            )
+        )
+        self.left_camera.start()
+
+        self.right_camera = CSI_Camera()
+        self.right_camera.open(
+            gstreamer_pipeline(
+                sensor_id=1,
+                capture_width=1920,
+                capture_height=1080,
+                flip_method=0,
+                display_width=960,
+                display_height=540,
+            )
+        )
+        self.right_camera.start()
+
+        # Set up the timer to publish images at a regular interval
+        self.timer = self.create_timer(0.1, self.publish_images)  # 10 Hz
+
+    def publish_images(self):
+        # Read images from both cameras
+        _, left_image = self.left_camera.read()
+        _, right_image = self.right_camera.read()
+
+        if left_image is not None and right_image is not None:
+            # Convert OpenCV images to ROS messages
+            left_msg = self.bridge.cv2_to_imgmsg(left_image, encoding="bgr8")
+            right_msg = self.bridge.cv2_to_imgmsg(right_image, encoding="bgr8")
+
+            # Publish the images to respective topics
+            self.publisher1.publish(left_msg)
+            self.publisher2.publish(right_msg)
+
+            self.get_logger().info('Publishing images')
+
+    def stop(self):
+        self.left_camera.stop()
+        self.left_camera.release()
+        self.right_camera.stop()
+        self.right_camera.release()
+
+
+def main(args=None):
+    rclpy.init(args=args)
+    dual_camera_publisher = DualCameraPublisher()
+
+    try:
+        rclpy.spin(dual_camera_publisher)
+    except KeyboardInterrupt:
+        pass
+    finally:
+        dual_camera_publisher.stop()
+        rclpy.shutdown()
+
+
+if __name__ == "__main__":
+    main()
